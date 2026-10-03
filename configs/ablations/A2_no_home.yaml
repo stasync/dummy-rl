@@ -1,0 +1,8 @@
+# A2: no "home" term -- nothing pulls the robot back to its spot after a recovery step.
+# Expectation: it drifts away hit after hit (bad for a firing-range target).
+inherit: ../base.yaml
+rewards:
+  weights:
+    home: 0.0
+ppo:
+  total_timesteps: 10000000

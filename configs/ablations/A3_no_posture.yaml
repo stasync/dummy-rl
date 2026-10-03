@@ -1,0 +1,9 @@
+# A3: no posture / calm terms -- only survival-type rewards shape the motion.
+# Expectation: survives, but sloppy, crouched or jittery poses (the "too little" side of the trade-off).
+inherit: ../base.yaml
+rewards:
+  weights:
+    posture: 0.0
+    calm: 0.0
+ppo:
+  total_timesteps: 10000000

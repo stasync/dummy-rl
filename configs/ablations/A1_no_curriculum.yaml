@@ -1,0 +1,7 @@
+# A1: no curriculum -- full-strength hits (all regions, bursts, shortest intervals) from step 0.
+# Question: does the curriculum matter, or would PPO get there anyway?
+inherit: ../base.yaml
+curriculum:
+  enabled: false
+ppo:
+  total_timesteps: 10000000

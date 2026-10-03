@@ -1,0 +1,106 @@
+# Base experiment (A0_full). Every knob lives here; experiments are configs, not code edits.
+# Ablations inherit this file and override a few keys (see configs/ablations/).
+
+seed: 0
+
+env:
+  xml: assets/stagger.xml
+  keyframe: stand
+  frame_skip: 10            # 10 x 2 ms physics steps = one 50 Hz policy step
+  episode_steps: 500        # 10 s
+  settle_steps: 25          # 0.5 s with no hits at the start of each episode
+  action_scale: 0.4         # rad: target = default_qpos + action_scale * a
+  reset_joint_noise: 0.02   # rad, uniform noise on the start pose (diversity)
+  reset_yaw_noise: 0.1      # rad, so the heading term has something to correct
+
+obs:
+  # Fixed scales, no running normalization: the browser must reproduce obs exactly.
+  scales:
+    ang_vel: 0.25
+    gravity: 1.0
+    lin_vel: 1.0
+    home: 1.0
+    joint_pos: 1.0
+    joint_vel: 0.05
+  clip: 10.0                # after scaling; keeps big hits from producing extreme inputs
+
+falls:
+  # Any of these bodies touching the floor = knockdown (feet and shins may touch).
+  ground_bodies: [head, torso, pelvis, upper_arm_L, upper_arm_R, lower_arm_L, lower_arm_R, thigh_L, thigh_R]
+  min_pelvis_height_frac: 0.55
+  max_torso_tilt_deg: 60.0
+
+hits:
+  region_weights: {torso: 0.35, pelvis: 0.15, head: 0.15, arms: 0.15, legs: 0.20}
+  magnitude_min_frac: 0.3   # |J| ~ U(min_frac, 1) * J_max(level)
+  max_elevation_deg: 15.0   # mostly horizontal shots
+  interval_max_s: 2.5       # time between hits ~ U(interval_min(level), interval_max)
+
+curriculum:
+  enabled: true             # false = train at max_level from step 0 (ablation A1)
+  start_level: 0
+  max_level: 10
+  j_max_final: 40.0         # N*s at max_level; J_max(L) = j_max_final * L / max_level
+  core_regions: [torso, pelvis]
+  all_regions_from_level: 3
+  interval_min_start_s: 2.5 # level 0
+  interval_min_final_s: 0.8 # max_level
+  burst_from_level: 6
+  burst_prob: 0.15          # chance a hit event is a shotgun-like burst
+  burst_pellets: [3, 6]
+  burst_total_scale: 1.5    # a burst's total impulse vs one normal hit
+  promote_survival: 0.8
+  demote_survival: 0.5
+  window_episodes: 50       # episodes at the current level needed before deciding
+
+randomization:
+  enabled: true
+  friction: [0.6, 1.2]
+  mass_scale: [0.9, 1.1]
+  kp_scale: [0.9, 1.1]
+  force_limit_scale: [0.9, 1.1]
+  obs_noise_std: 0.01
+  action_latency_steps: [0, 1]
+
+rewards:
+  # weight * term(state). Negative weights are penalties. 0 disables a term (still logged as 0).
+  weights:
+    alive: 1.0
+    upright: 1.0
+    height: 0.5
+    home: 0.5
+    heading: 0.2
+    calm: 0.3
+    posture: -0.1
+    energy: -0.0005         # weight missing in the original plan; placeholder, tune
+    action_rate: -0.02
+    joint_limit: -1.0
+    foot_slip: -0.1
+    termination: -20.0
+  params:
+    upright_sigma: 0.05
+    height_sigma: 0.005
+    home_sigma: 0.5
+    heading_sigma: 0.3
+    calm_sigma: 0.1
+    joint_limit_soft_frac: 0.95  # penalize beyond 95% of each joint's range
+
+ppo:
+  total_timesteps: 30000000
+  n_envs: 8                 # measured on M1 Pro: 8 envs = 18.5k sim steps/s, 10 envs slower (0 = cpu_count)
+  n_steps: 256              # per env, per rollout
+  batch_size: 0             # 0 = n_envs * n_steps / 4
+  n_epochs: 5
+  learning_rate: 3.0e-4
+  lr_schedule: linear       # linear decay to 0 over training
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 1.0
+  net_arch: [256, 256, 128] # separate actor and critic MLPs of this shape
+  activation: elu
+  log_std_init: -1.0
+  torch_threads: 4
+  checkpoint_every_steps: 2000000

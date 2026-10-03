@@ -1,0 +1,7 @@
+# A4: no domain randomization -- one exact set of physics, no obs noise, no latency.
+# Expectation: similar or better in nominal sim, more brittle when physics or timing differ.
+inherit: ../base.yaml
+randomization:
+  enabled: false
+ppo:
+  total_timesteps: 10000000
