@@ -19,6 +19,7 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import sys
 import time
 from collections import Counter, defaultdict
@@ -170,10 +171,21 @@ def main() -> None:
         ]
     )
 
+    # Stop cleanly on Ctrl-C *and* `kill <pid>`: both raise KeyboardInterrupt, so the finally
+    # block below still saves model.zip + summary.json. (Background jobs started with `&` ignore
+    # SIGINT by default, so it is re-enabled explicitly.)
+    def _interrupt(signum, frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _interrupt)
+    signal.signal(signal.SIGTERM, _interrupt)
+
     print(f"run {args.name}: {n_envs} envs, {cfg.ppo.total_timesteps:,} steps, batch {model.batch_size}", flush=True)
     t0 = time.time()
     try:
         model.learn(total_timesteps=cfg.ppo.total_timesteps, callback=callbacks, tb_log_name="ppo")
+    except KeyboardInterrupt:
+        print(f"interrupted at {model.num_timesteps:,} steps; saving", flush=True)
     finally:
         wall = time.time() - t0
         model.save(run_dir / "model.zip")

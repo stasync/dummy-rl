@@ -1,0 +1,10 @@
+# T1: wider action range. With action_scale 0.4 the furthest reachable foot placement is ~0.11 m
+# forward with ~4 cm clearance, but recovering from ~24 N*s needs a ~0.2 m step (capture point).
+# log_std_init is lowered so initial exploration noise in radians stays the same as base
+# (0.37 * 0.4 = 0.15 rad): std = 0.15 / 0.6 = 0.245 -> log = -1.4.
+inherit: ../base.yaml
+env:
+  action_scale: 0.6
+ppo:
+  log_std_init: -1.4
+  total_timesteps: 6000000

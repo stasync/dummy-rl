@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stagger</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="hud">
+      <div id="title">STAGGER <span id="dev">dev build</span></div>
+      <div id="modes"></div>
+      <div id="status">loading physics…</div>
+      <div id="meter"><div id="meter-fill"></div><span>balance confidence</span></div>
+      <div id="help">click: shove · 1 AI · 2 Stiff · 3 Limp · R reset</div>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

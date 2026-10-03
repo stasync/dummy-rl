@@ -1,0 +1,7 @@
+# T2: like T1 but action_scale 0.8 (same initial exploration in radians: 0.15 / 0.8 -> log = -1.69).
+inherit: ../base.yaml
+env:
+  action_scale: 0.8
+ppo:
+  log_std_init: -1.69
+  total_timesteps: 6000000

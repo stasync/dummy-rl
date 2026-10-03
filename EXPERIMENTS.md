@@ -85,6 +85,46 @@ bug, and it is identical in Python and the browser.
   like it squats to absorb hits and sinks too low. Watch whether this persists in the long run; options are a stronger
   `height` weight or a slightly lower threshold.
 
-### D1_overnight: 30M steps, full curriculum (running)
+### D1_overnight: full curriculum, stopped at 8.5M of 30M (plateau)
 
-- **Config:** `configs/base.yaml`, 30M steps, 8 envs, launched 2026-10-03 ~15:40, ETA ~75 min.
+- **Config:** `configs/base.yaml`, 8 envs, ~6.2–7k env-steps/s. Stopped by hand at 8.5M steps, after it
+  had been flat since ~3M; checkpoints at 2/4/6/8M (no model.zip, since SIGINT is ignored by `&` background jobs;
+  train.py now saves on SIGINT *and* SIGTERM).
+- **Curriculum:** reached level 3 by 1M, then bounced between 3–5 (98 level changes by 7M); mean level per 1M-step bin:
+  0.7, 3.1, 3.1, 3.9, 4.3, 4.3, 4.2. Rollout survival flat at ~0.66.
+- **Reward terms** (per-episode sums, 0–1M → 6–7M): energy −166 → −58, action_rate −32 → −19, foot_slip −21 → −6,
+  calm +27 → +80. It got smoother and calmer, but not more capable. Action std shrank 0.32 → 0.17.
+- **Knockdown analysis** (6M checkpoint, level 6 = 24 N·s, 60 episodes, nominal physics): survival **0.40**.
+  - Reasons: tilt 30, height 5, arm contact 1.
+  - Body that took the last hit before a KO: torso 19 (of 97 torso hits, 20%), **head 10 (of 29 head hits, 34%)**, others 1 each.
+  - Push direction (relative to facing): left 12, right 9, forward 10, backward 5.
+  - **Median 1.1 s from the last hit to the KO.** It doesn't topple instantly; it tries to recover and fails.
+- **Diagnosis:** the action range limits stepping. With `action_scale` 0.4 rad the furthest a foot can be placed is
+  ~0.11 m forward with ~4 cm clearance (hip −0.55, knee 0.7). The capture point for 24 N·s at CoM height ~0.73 m
+  is v/ω₀ = (24/30) / √(9.81/0.73) ≈ 0.22 m, so it needs a ~0.2 m step. Reward weights look unlikely to be the blocker:
+  posture/energy for a recovery step cost a few reward points, versus ~2 points per step for every step lost to a fall.
+- **Next:** T1/T2 widen the action range (0.6 / 0.8 rad) with the same initial exploration in radians.
+
+## Day 2 (2026-10-03)
+
+### Parity (PLAN.md §7): passes
+
+`scripts/export_policy.py` + `scripts/parity_fixtures.py` on D1_short, `web/tests/parity.test.ts`, 50 cases from AI/Stiff/Limp
+episodes at level 6 (7 knocked down):
+
+| check | max diff | target |
+| --- | --- | --- |
+| obs | 1.2e-7 | 1e-4 |
+| action | 1.5e-7 | 1e-4 |
+| value (relative) | 4.0e-7 | 1e-5 |
+| qvel after applyHit + one control step | 1.9e-13 | 1e-6 |
+| knockdown reason, before and after the hit | identical (50/50) | identical |
+
+The obs difference is just Python's final float32 cast. The game's `Sim` (headless, `web/tests/sim.test.ts`): a 15 N·s
+chest shove from the shooter's side, AI recovers (21 cm drift, meter dips to 0.87), Stiff topples (tilt).
+
+### T1_action06 / T2_action08 (running)
+
+- `configs/tuning/T1_action06.yaml` (action_scale 0.6, log_std_init −1.4) and `T2_action08.yaml` (0.8, −1.69), 6M steps each,
+  run in parallel (~4.95k env-steps/s each, ~9.9k combined: two runs at once use the CPU better than one).
+- Compare against D1_overnight at the same step count.
