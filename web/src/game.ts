@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import type { MainModule, MjData } from '@mujoco/mujoco';
 import type { Sfx } from './audio';
+import type { BrainPanel } from './brain';
 import type { DebugOverlay } from './debug';
 import type { Hud } from './hud';
 import type { Scene } from './scene';
@@ -75,6 +76,7 @@ export class Game {
   private hitStop = 0;
   private replay: ReplayBuffer;
   private replayData: MjData;
+  private ghostData: MjData; // robot posed at the PD targets (debug ghost)
   private replayFrom = 0;
   private replayTo = 0;
   private replayT = 0;
@@ -89,6 +91,7 @@ export class Game {
     private hud: Hud,
     private sfx: Sfx,
     private debug: DebugOverlay,
+    private brain: BrainPanel,
   ) {
     const c = sim.policy.contract;
     this.jTrained = c.hit_model.j_max_trained;
@@ -97,6 +100,7 @@ export class Game {
     const seconds = REPLAY_BEFORE_S + REPLAY_AFTER_S + 0.5;
     this.replay = new ReplayBuffer(sim.model.nq, Math.ceil(seconds / this.physDt));
     this.replayData = new mj.MjData(sim.model);
+    this.ghostData = new mj.MjData(sim.model);
     this.bindInput();
     hud.setMode(sim.mode);
     this.refreshHud();
@@ -136,9 +140,21 @@ export class Game {
           if (this.phase === 'replay') return this.enterReview();
           if (this.phase === 'review') return this.newRound();
           return;
+        case 'tab':
+          e.preventDefault(); // otherwise the browser moves keyboard focus
+          return this.toggleDebug();
       }
-      if (e.code === 'Backquote') this.debug.toggle();
     });
+    document.getElementById('debug-btn')!.addEventListener('click', (e) => {
+      (e.currentTarget as HTMLElement).blur(); // keep Enter/Space for the game, not for re-clicking the button
+      this.toggleDebug();
+    });
+  }
+
+  private toggleDebug(): void {
+    this.debug.toggle();
+    this.brain.setVisible(this.debug.visible);
+    this.hud.setDebug(this.debug.visible);
   }
 
   private setPointer(e: PointerEvent): void {
@@ -290,6 +306,8 @@ export class Game {
 
     this.scene.update(shown);
     this.debug.update(shown, dt);
+    this.updateGhost();
+    if (this.debug.visible) this.brain.draw(this.sim, dt);
     this.hud.setMeter(this.sim.policy.confidence(this.sim.value));
     if (this.phase === 'playing') {
       this.hud.setStatus(`${this.sim.mode === 'ai' ? 'AI balancing' : this.sim.mode === 'stiff' ? 'holding pose (Stiff)' : 'motors off (Limp)'} · ${this.sim.time.toFixed(1)} s`);
@@ -308,10 +326,24 @@ export class Game {
     const record = () => this.replay.push(this.sim.data.qpos);
     while (this.acc >= this.sim.dt) {
       this.sim.controlStep(record);
+      this.brain.record(this.sim);
       this.acc -= this.sim.dt;
       this.debug.addHits(this.sim.lastHits);
       if (this.phase === 'playing' && this.sim.knockdown) this.onKnockdown();
     }
+  }
+
+  /** Ghost = the robot with every joint at its PD target: what the motors are pulling toward. */
+  private updateGhost(): void {
+    const sim = this.sim;
+    const show = this.debug.visible && this.phase !== 'replay' && sim.powered && sim.mode !== 'limp';
+    if (!show) return this.scene.updateGhost(null);
+    const q = this.ghostData.qpos;
+    q.set(sim.data.qpos);
+    const ctrl = sim.data.ctrl;
+    for (let i = 0; i < sim.model.nu; i++) q[7 + i] = ctrl[i]; // actuator i drives qpos[7 + i] (checked in Python)
+    this.mj.mj_kinematics(sim.model, this.ghostData);
+    this.scene.updateGhost(this.ghostData);
   }
 
   private replayFrame(dt: number): MjData {

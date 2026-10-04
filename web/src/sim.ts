@@ -32,8 +32,11 @@ export class Sim {
   value = 0;           // critic V(s) at the last control step (shown even in Stiff/Limp)
   time = 0;
   lastHits: Hit[] = []; // hits applied in the last control step (effects, debug arrows)
+  /** What the network sees (last control step). */
+  readonly obs = new Float64Array(OBS_DIM);
+  /** What the network outputs, in every mode; only applied to the motors in AI mode (debug panel, ghost). */
+  readonly aiAction: Float64Array;
 
-  private obs = new Float64Array(OBS_DIM);
   private prevAction: Float64Array;
   private homeXY: [number, number] = [0, 0];
   private pending: Hit[] = [];
@@ -49,6 +52,7 @@ export class Sim {
       throw new Error(`XML timestep ${this.model.opt.timestep} != policy timestep ${c.timestep}`);
     }
     this.prevAction = new Float64Array(c.act_dim);
+    this.aiAction = new Float64Array(c.act_dim);
     this.falls = new FallDetector(this.model, c.falls, c.standing_height);
     this.actuationBit = mj.mjtDisableBit.mjDSBL_ACTUATION.value;
     this.reset();
@@ -99,11 +103,13 @@ export class Sim {
     buildObs(data.qpos, data.qvel, this.prevAction, c.default_joint_pos, this.homeXY, c.home_yaw, c.obs_scales, c.obs_clip, this.obs);
     this.value = policy.value(this.obs);
 
+    // The network always runs (so the debug panel can show what it *would* do in Stiff/Limp),
+    // but its output only drives the motors in AI mode.
+    this.aiAction.set(policy.act(this.obs));
     const ctrl = data.ctrl;
     if (this.mode === 'ai') {
-      const a = policy.act(this.obs);
-      for (let i = 0; i < a.length; i++) ctrl[i] = c.default_joint_pos[i] + c.action_scale * a[i];
-      this.prevAction.set(a);
+      for (let i = 0; i < c.act_dim; i++) ctrl[i] = c.default_joint_pos[i] + c.action_scale * this.aiAction[i];
+      this.prevAction.set(this.aiAction);
     } else {
       ctrl.set(c.default_joint_pos);
     }

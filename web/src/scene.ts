@@ -20,6 +20,9 @@ export class Scene {
   /** Static range geometry: shots that miss the robot hit these (sparks on walls/floor). */
   readonly rangeMeshes: THREE.Object3D[] = [];
   private dynamic: { mesh: THREE.Mesh; geom: number }[] = [];
+  /** Translucent copy of the robot posed at the network's joint targets (debug). */
+  private ghost: { mesh: THREE.Mesh; geom: number }[] = [];
+  private ghostGroup = new THREE.Group();
   private tmp = new THREE.Matrix4();
   private sparks: Sparks;
   private trauma = 0; // camera shake amount, decays over time
@@ -82,13 +85,34 @@ export class Scene {
       this.scene.add(mesh);
       this.dynamic.push({ mesh, geom: g });
       this.robotMeshes.push(mesh);
+
+      const ghost = new THREE.Mesh(geo, this.ghostMaterial);
+      ghost.matrixAutoUpdate = false;
+      ghost.renderOrder = 5;
+      this.ghostGroup.add(ghost);
+      this.ghost.push({ mesh: ghost, geom: g });
     }
+    this.ghostGroup.visible = false;
+    this.scene.add(this.ghostGroup);
   }
 
-  /** Copy every robot geom's world pose into its mesh. geom_xmat is row-major, like Matrix4.set. */
+  private ghostMaterial = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.22, depthWrite: false });
+
+  /** Copy every robot geom's world pose into its mesh. */
   update(data: MjData): void {
+    this.pose(this.dynamic, data);
+  }
+
+  /** Pose the ghost robot from `data` (the network's target pose), or hide it with null. */
+  updateGhost(data: MjData | null): void {
+    this.ghostGroup.visible = data !== null;
+    if (data) this.pose(this.ghost, data);
+  }
+
+  /** geom_xmat is row-major, like Matrix4.set's arguments. */
+  private pose(meshes: { mesh: THREE.Mesh; geom: number }[], data: MjData): void {
     const p = data.geom_xpos, R = data.geom_xmat;
-    for (const { mesh, geom: g } of this.dynamic) {
+    for (const { mesh, geom: g } of meshes) {
       const r = g * 9, o = g * 3;
       this.tmp.set(R[r], R[r + 1], R[r + 2], p[o], R[r + 3], R[r + 4], R[r + 5], p[o + 1], R[r + 6], R[r + 7], R[r + 8], p[o + 2], 0, 0, 0, 1);
       mesh.matrix.copy(this.tmp);

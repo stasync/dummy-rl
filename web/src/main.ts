@@ -3,6 +3,7 @@
 import loadMujoco from '@mujoco/mujoco';
 import xml from '../../assets/stagger.xml?raw';
 import { Sfx } from './audio';
+import { BrainPanel } from './brain';
 import { DebugOverlay } from './debug';
 import { Game } from './game';
 import { Hud } from './hud';
@@ -32,7 +33,7 @@ async function main(): Promise<void> {
   const standingComHeight = sim.data.subtree_com[pelvis * 3 + 2]; // reset() ran mj_forward
   const scene = new Scene(document.getElementById('view') as HTMLCanvasElement, mj, sim.model);
   const debug = new DebugOverlay(mj, sim.model, scene, standingComHeight);
-  const game = new Game(mj, sim, scene, hud, new Sfx(), debug);
+  const game = new Game(mj, sim, scene, hud, new Sfx(), debug, new BrainPanel(mj, sim.model));
   hud.setInfo(`policy ${c.meta.run} · ${(c.meta.timesteps / 1e6).toFixed(1)}M steps · trained to ${c.hit_model.j_max_trained} N·s`);
 
   let last = performance.now();

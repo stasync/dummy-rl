@@ -184,3 +184,28 @@ All on the new base (action_scale 0.6, hit patterns), 6M steps, same seed, 3 in 
   To investigate after the main run.
 - **Game:** `web/public/policy.json` = S2_capture (6M steps, level 7, j_max_trained 28 N·s). Parity: obs 1.2e-7,
   action 1.3e-7, value 1.2e-6 (relative), qvel after hit 3.0e-13, knockdown 50/50 (8 knocked down).
+
+## Day 2 overnight queue (2026-10-04)
+
+`python scripts/run_queue.py`: A0_full (30M) and ablations A1–A4 (10M each), 2 at a time.
+Base = action_scale 0.6, capture-point reward 1.0, weapon-like hit patterns from level 2, randomization on.
+
+### A0_full: main run, 30M steps
+
+- Final curriculum level **9** (36 N·s); reached 9 at the very end, so more steps would likely help.
+- **Eval** (40 episodes per cell, same seeds and hits for every controller):
+
+  | level (J_max) | Stiff | S2_capture (6M) | **A0_full (30M)** |
+  | --- | --- | --- | --- |
+  | 5 (20 N·s) | 0.10 | 0.93 | 0.90 |
+  | 7 (28 N·s) | 0.03 | 0.47 | **0.88** |
+  | 9 (36 N·s) | 0.00 | 0.30 | **0.68** |
+  | 10 (40 N·s) | 0.00 | 0.20 | **0.53** |
+  | recovery steps / hit event @ L10 | 0.53* | 1.89 | **3.08** |
+
+  \* Stiff can't step (its count is feet sliding while falling).
+- **Headline:** at the plan's maximum hit strength (40 N·s, including shotgun bursts and rifle rapid fire), the learned
+  controller survives a full 10 s episode 53% of the time vs 0% for Stiff, taking ~3 recovery steps per hit event.
+- Video: `runs/A0_full/videos/{ai,stiff,limp}_L10_s4.mp4` (same hits): AI survives 10 s, Stiff topples at 3.1 s, Limp at 0.8 s.
+- **Game:** `web/public/policy.json` = A0_full (j_max_trained 36 N·s). Parity: obs 1.0e-7, action 3.6e-7,
+  value 3.8e-7 (relative), qvel after hit 2.0e-13, knockdown 50/50 (5 knocked down).

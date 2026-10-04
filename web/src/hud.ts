@@ -44,6 +44,10 @@ export class Hud {
     fill.style.background = confidence > 0.6 ? 'var(--ok)' : confidence > 0.3 ? 'var(--accent)' : 'var(--danger)';
   }
 
+  setDebug(on: boolean): void {
+    $('debug-btn').classList.toggle('on', on);
+  }
+
   setStatus(text: string): void {
     $('status').textContent = text;
   }

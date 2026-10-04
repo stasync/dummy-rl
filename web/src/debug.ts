@@ -1,4 +1,4 @@
-// Debug overlay (~ key): what the balance controller is dealing with, drawn on the floor.
+// Debug overlay (Tab key or the HUD's debug button): what the balance controller is dealing with, drawn on the floor.
 //   cyan disc       center of mass projected on the ground
 //   magenta ring    capture point: where the CoM would come to rest (CoM + v / omega0).
 //                   When it leaves the support polygon, the robot must step or fall.

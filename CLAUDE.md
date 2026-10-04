@@ -53,5 +53,5 @@ Notes / blockers:
 - D1_overnight plateaued at level ~4.3 and was stopped at 8.5M (EXPERIMENTS.md). Diagnosis: too little stepping;
   fixes = wider action range (done), capture-point reward + weapon-like hit patterns (S2/S3), step metric logged.
 - Old run configs (curriculum.burst_*) are auto-migrated by config._migrate so they stay evaluable.
-- Game keys: click shoot · Q/E/wheel weapon · 1/2/3 AI/Stiff/Limp · R rewind (after KO) · Enter new round · ~ debug.
-- web/public/policy.json = S2_capture (level 7, 28 N·s); replace with A0_full after the overnight run.
+- Game keys: click shoot · Q/E/wheel weapon · 1/2/3 AI/Stiff/Limp · R rewind (after KO) · Enter new round · Tab (or HUD button) debug.
+- web/public/policy.json = A0_full (30M steps, level 9, trained to 36 N·s): 53% survival at 40 N·s vs 0% Stiff.
