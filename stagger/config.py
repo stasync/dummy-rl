@@ -48,6 +48,10 @@ class HitsCfg:
     magnitude_min_frac: float
     max_elevation_deg: float
     interval_max_s: float
+    patterns: dict[str, float]      # hit-event mix: single / burst (shotgun) / rapid (rifle)
+    pattern_hits: list[int]         # [min, max] hits in a burst or rapid event
+    rapid_interval_s: float
+    pattern_total_scale: float      # total impulse of a burst/rapid event vs one single hit
 
 
 @dataclass
@@ -60,10 +64,7 @@ class CurriculumCfg:
     all_regions_from_level: int
     interval_min_start_s: float
     interval_min_final_s: float
-    burst_from_level: int
-    burst_prob: float
-    burst_pellets: list[int]
-    burst_total_scale: float
+    patterns_from_level: int        # below this level, single hits only
     promote_survival: float
     demote_survival: float
     window_episodes: int
@@ -144,6 +145,22 @@ def _read_with_inheritance(path: Path) -> dict:
     return _deep_merge(_read_with_inheritance((path.parent / parent).resolve()), raw)
 
 
+def _migrate(raw: dict) -> dict:
+    """Upgrade configs saved by older runs (runs/*/config.yaml) so they still load for eval/plots.
+
+    v0 (Day 1): bursts were configured under `curriculum.burst_*`; now hit patterns live in `hits`.
+    """
+    cur, hits = raw.get("curriculum", {}), raw.get("hits", {})
+    if "burst_prob" in cur:
+        p = cur.pop("burst_prob")
+        hits.setdefault("patterns", {"single": 1.0 - p, "burst": p, "rapid": 0.0})
+        hits.setdefault("pattern_hits", cur.pop("burst_pellets"))
+        hits.setdefault("pattern_total_scale", cur.pop("burst_total_scale"))
+        hits.setdefault("rapid_interval_s", 0.1)
+        cur.setdefault("patterns_from_level", cur.pop("burst_from_level"))
+    return raw
+
+
 def _build(cls, data, where: str):
     """Recursively build dataclass `cls` from a dict, rejecting unknown/missing keys."""
     if not dataclasses.is_dataclass(cls):
@@ -169,7 +186,7 @@ def _build(cls, data, where: str):
 
 def load_config(path: str | Path) -> Config:
     path = Path(path).resolve()
-    cfg = _build(Config, _read_with_inheritance(path), path.name)
+    cfg = _build(Config, _migrate(_read_with_inheritance(path)), path.name)
     cfg.source = str(path)
     return cfg
 

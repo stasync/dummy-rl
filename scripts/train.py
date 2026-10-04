@@ -58,12 +58,16 @@ class StaggerCallback(BaseCallback):
         self.win_survived: list[bool] = []
         self.win_reasons: Counter[str] = Counter()
         self.win_hits = 0
+        self.win_events = 0
+        self.win_steps = 0
 
     def _on_step(self) -> bool:
         for i, (info, done) in enumerate(zip(self.locals["infos"], self.locals["dones"])):
             for k, v in info["reward_terms"].items():
                 self.ep_terms[i][k] += v
             self.win_hits += info["hits"]
+            self.win_events += info["hit_events"]
+            self.win_steps += info["steps_taken"]
             if done:
                 survived = info["knockdown"] == ""  # done without a knockdown = survived to the time limit
                 for k, v in self.ep_terms[i].items():
@@ -88,6 +92,10 @@ class StaggerCallback(BaseCallback):
         if rate is not None:
             self.logger.record("curriculum/window_survival", rate)
         self.logger.record("ep/hits_per_rollout", self.win_hits)
+        # Recovery steps (foot lifts off and lands >= 5 cm away) per hit event: did it learn to step?
+        self.logger.record("ep/steps_per_rollout", self.win_steps)
+        if self.win_events:
+            self.logger.record("ep/steps_per_hit_event", self.win_steps / self.win_events)
         self._reset_window()
 
         if self.curriculum.update():

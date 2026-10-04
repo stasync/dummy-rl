@@ -29,13 +29,18 @@ pytest
 cd web && npm run dev        # the game
 cd web && npx vitest run     # WASM smoke test (+ parity test, Day 2)
 python scripts/bench.py --envs 1 8   # raw env-steps/s
+python scripts/run_queue.py         # overnight: A0_full + ablations, 2 at a time
+python scripts/eval.py --runs stiff runs/A0_full --levels 2 4 6 8   # survival + steps/hit
 ```
 
 ## Status
 
 - [x] Day 1: it stands and takes small hits (D1_short: 97% survival at 12 N·s vs 20% for Stiff; first MP4s; 6.75k steps/s)
-- [ ] Day 2: tuning, export, robot in the browser
-- [ ] Day 3: make it a game
+- [~] Day 2: tuning, export, robot in the browser. Export, parity (all pass, ~1e-7 / 2e-13) and the browser robot are done;
+  reward/stepping tuning in progress (T1/T2 → action_scale 0.6; S1–S3 stepping experiments), overnight queue not started
+- [~] Day 3: make it a game. Weapons, sparks/shake/hit-stop/sound, knockdown → slow-mo replay → rewind, best scores,
+  balance meter, debug overlay (CoM, capture point, support polygon, torque tint, hit arrows) and look pass are written;
+  needs a play-test in a real browser
 - [ ] Day 4: analysis and ship
 
 Notes / blockers:
@@ -45,4 +50,8 @@ Notes / blockers:
 - Throughput: use 8 envs on the M1 Pro (10 is slower). See EXPERIMENTS.md E0c.
 - Obs and knockdown use only qpos/qvel + data.contact (no xmat/cvel) so the TS mirror needs no mj_forward tricks.
 - MuJoCo pinned to 3.14.0 in both pyproject.toml and web/package.json; WASM vs native qpos diff is 2.5e-16 after 500 steps.
-- D1_overnight (30M steps) launched; review it first thing on Day 2.
+- D1_overnight plateaued at level ~4.3 and was stopped at 8.5M (EXPERIMENTS.md). Diagnosis: too little stepping;
+  fixes = wider action range (done), capture-point reward + weapon-like hit patterns (S2/S3), step metric logged.
+- Old run configs (curriculum.burst_*) are auto-migrated by config._migrate so they stay evaluable.
+- Game keys: click shoot · Q/E/wheel weapon · 1/2/3 AI/Stiff/Limp · R rewind (after KO) · Enter new round · ~ debug.
+- web/public/policy.json = S2_capture (level 7, 28 N·s); replace with A0_full after the overnight run.

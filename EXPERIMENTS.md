@@ -123,8 +123,64 @@ episodes at level 6 (7 knocked down):
 The obs difference is just Python's final float32 cast. The game's `Sim` (headless, `web/tests/sim.test.ts`): a 15 N·s
 chest shove from the shooter's side, AI recovers (21 cm drift, meter dips to 0.87), Stiff topples (tilt).
 
-### T1_action06 / T2_action08 (running)
+### T1_action06 / T2_action08: wider action range
 
 - `configs/tuning/T1_action06.yaml` (action_scale 0.6, log_std_init −1.4) and `T2_action08.yaml` (0.8, −1.69), 6M steps each,
-  run in parallel (~4.95k env-steps/s each, ~9.9k combined: two runs at once use the CPU better than one).
-- Compare against D1_overnight at the same step count.
+  run in parallel (~4.8k env-steps/s each, ~9.5k combined: two runs at once use the CPU better than one).
+  log_std_init keeps the initial exploration noise in *radians* equal to base (0.15 rad).
+- Final curriculum level: T1 5, T2 6 (D1_overnight: bouncing 4–5).
+- **Eval** (`scripts/eval.py`, 40 episodes per cell, same seeds; every controller faces the *new* weapon-pattern hits
+  from base.yaml, so this also tests generalization to bursts/rapid fire none of them trained on much):
+
+  | level (J_max) | Stiff | D1_overnight @6M (0.4) | T1 (0.6) | T2 (0.8) |
+  | --- | --- | --- | --- | --- |
+  | 3 (12 N·s) | 0.42 | 0.95 | 0.97 | 0.97 |
+  | 5 (20 N·s) | 0.10 | 0.60 | **0.72** | **0.78** |
+  | 7 (28 N·s) | 0.03 | 0.20 | **0.42** | 0.30 |
+
+  Recovery steps per hit event at level 7: D1 0.97, T1 1.21, T2 1.02 (Stiff 0.30 = feet sliding while it falls).
+- **Conclusion:** a wider action range helps (+12–22 points at the hard levels, same step budget). 0.6 vs 0.8 is within
+  noise (±0.07 at n=40). **Chose 0.6** for base: smaller residual = smoother motion, less extreme PD targets in the game.
+
+### Why it barely steps, and what to change
+
+PPO settled in a local optimum: absorb hits with ankles/hips. Stepping is all-or-nothing. A half-step (lifting a foot)
+shrinks the support area and makes a fall *more* likely, so exploration toward stepping is punished before a complete,
+well-timed step is ever rewarded, and Gaussian action noise almost never produces one. Multi-hit events (bursts) were
+also only trained from level 6, which the curriculum rarely reached.
+
+Changes (each is a config switch, so it can be ablated):
+
+1. **Measure it:** env counts recovery steps (foot lifts off, lands ≥ 5 cm away); logged as `ep/steps_per_hit_event`.
+2. **Capture-point reward** (`capture` term): CP = CoM_xy + v_CoM_xy / √(g/h_CoM). Reward exp(−d²/0.01), with d = distance
+   from the CP to the segment between the feet, minus 6 cm. Standing still it is ~1. After a big push the only ways back
+   are braking or moving a foot toward the CP, and that pays off *during* the step, which gives PPO a gradient toward stepping.
+3. **Weapon-like hit patterns from level 2:** single (60%), burst/shotgun (20%: 3–6 hits in one step), rapid/rifle
+   (20%: 3–6 hits 0.1 s apart). Multi-hit events carry 1.5× the impulse, split evenly.
+4. **Exploration:** entropy bonus 0.005 as a separate factor.
+
+### S1 / S2 / S3: stepping experiments → capture-point reward wins
+
+All on the new base (action_scale 0.6, hit patterns), 6M steps, same seed, 3 in parallel
+(~1.9–3.8k env-steps/s each; the machine was also busy). S1 control (capture 0), S2 capture 1.0, S3 capture 1.0 + ent_coef 0.005.
+
+- Final curriculum level: S1 **5**, S2 **7** (touched 8), S3 **7**.
+- **Eval** (`scripts/eval.py`, 40 episodes per cell, same seeds, base.yaml hit patterns for everyone):
+
+  | level (J_max) | Stiff | T1 (old hits) | S1 control | **S2 capture** | S3 capture + entropy |
+  | --- | --- | --- | --- | --- | --- |
+  | 3 (12 N·s) | 0.42 | 0.97 | 0.95 | 0.97 | 0.93 |
+  | 5 (20 N·s) | 0.10 | 0.72 | 0.75 | **0.93** | 0.75 |
+  | 7 (28 N·s) | 0.03 | 0.42 | 0.23 | **0.47** | 0.45 |
+  | 9 (36 N·s) | 0.00 | 0.20 | 0.07 | **0.30** | 0.17 |
+  | recovery steps / hit event @ L9 | 0.48* | 1.49 | 1.21 | **1.99** | 1.92 |
+
+  \* Stiff can't step: its count is feet sliding while it topples (the metric's noise floor).
+- **Conclusion:** capture-point shaping is the biggest single improvement so far. At the same budget it roughly
+  quadruples survival at 36 N·s (0.07 → 0.30) and raises stepping from ~1.2 to ~2 steps per hit event. The entropy bonus
+  adds nothing (worse at L5/L9, more `height` knockdowns). **base.yaml now has `capture: 1.0`, ent_coef 0.**
+- Video: `runs/S2_capture/videos/{ai,stiff}_L7_s4.mp4`. AI survives 10 s at 28 N·s with shifting stance; Stiff topples at 3.6 s.
+- Remaining failure mode at high levels is `height` (pelvis < 55% of standing height): legs fold instead of tipping over.
+  To investigate after the main run.
+- **Game:** `web/public/policy.json` = S2_capture (6M steps, level 7, j_max_trained 28 N·s). Parity: obs 1.2e-7,
+  action 1.3e-7, value 1.2e-6 (relative), qvel after hit 3.0e-13, knockdown 50/50 (8 knocked down).

@@ -129,7 +129,7 @@ def main() -> None:
         "hit_model": {
             # Strongest single hit the policy actually trained against (curriculum level reached),
             # vs the curriculum's ceiling. Weapons are tuned against j_max_trained.
-            "j_max_trained": schedule_for_level(level, cfg.curriculum, list(REGIONS)).j_max,
+            "j_max_trained": schedule_for_level(level, cfg.curriculum, list(REGIONS), cfg.hits.patterns).j_max,
             "j_max_curriculum": cfg.curriculum.j_max_final,
         },
     }

@@ -31,6 +31,7 @@ class Robot:
     default_qpos: np.ndarray        # full qpos of the "stand" keyframe (nq,)
     default_joint_pos: np.ndarray   # actuated joints only (nu,)
     standing_height: float          # pelvis z in the default pose (h0)
+    standing_com_height: float      # whole-body CoM z in the default pose (for the capture point)
     joint_lo: np.ndarray            # joint range per actuated joint (nu,)
     joint_hi: np.ndarray
     body_ids: dict[str, int]
@@ -65,11 +66,15 @@ def load_robot(xml_path: str | Path, keyframe: str = "stand") -> Robot:
     joint_ids = model.actuator_trnid[:, 0]
 
     body_ids = {model.body(b).name: b for b in range(1, model.nbody)}
+    data = mujoco.MjData(model)
+    mujoco.mj_resetDataKeyframe(model, data, key.id)
+    mujoco.mj_forward(model, data)
     return Robot(
         model=model,
         default_qpos=default_qpos,
         default_joint_pos=default_qpos[7:].copy(),
         standing_height=float(default_qpos[2]),
+        standing_com_height=float(data.subtree_com[body_ids["pelvis"], 2]),
         joint_lo=model.jnt_range[joint_ids, 0].copy(),
         joint_hi=model.jnt_range[joint_ids, 1].copy(),
         body_ids=body_ids,

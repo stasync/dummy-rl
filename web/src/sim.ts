@@ -12,14 +12,26 @@ import type { Policy } from './policy';
 
 export type Mode = 'ai' | 'stiff' | 'limp';
 
+/** Everything needed to put the simulation back exactly where it was (rewind). */
+export interface SimSnapshot {
+  qpos: Float64Array;
+  qvel: Float64Array;
+  ctrl: Float64Array;
+  warmstart: Float64Array; // MuJoCo's solver warm-start: part of the state for exact replay
+  prevAction: Float64Array;
+  time: number;
+}
+
 export class Sim {
   readonly model: MjModel;
   readonly data: MjData;
   readonly dt: number; // seconds per control step
   mode: Mode = 'ai';
+  powered = true;      // false after a knockdown: the robot "powers down" and collapses
   knockdown = '';
-  value = 0; // critic V(s) at the last control step (shown even in Stiff/Limp)
+  value = 0;           // critic V(s) at the last control step (shown even in Stiff/Limp)
   time = 0;
+  lastHits: Hit[] = []; // hits applied in the last control step (effects, debug arrows)
 
   private obs = new Float64Array(OBS_DIM);
   private prevAction: Float64Array;
@@ -50,17 +62,29 @@ export class Sim {
     this.homeXY = [data.qpos[0], data.qpos[1]];
     this.prevAction.fill(0);
     this.pending = [];
+    this.lastHits = [];
     this.knockdown = '';
     this.time = 0;
+    this.powered = true;
     this.setMode(this.mode);
   }
 
   setMode(mode: Mode): void {
     this.mode = mode;
-    const opt = this.model.opt;
-    // Limp = motors off entirely (same as set_limp in Python).
-    opt.disableflags = mode === 'limp' ? opt.disableflags | this.actuationBit : opt.disableflags & ~this.actuationBit;
     if (mode !== 'ai') this.prevAction.fill(0); // Stiff/Limp hold action 0 = the default pose
+    this.applyActuation();
+  }
+
+  /** Motors off without changing the selected mode (used after a knockdown). */
+  setPowered(on: boolean): void {
+    this.powered = on;
+    this.applyActuation();
+  }
+
+  private applyActuation(): void {
+    const opt = this.model.opt;
+    const off = this.mode === 'limp' || !this.powered; // same switch as set_limp in Python
+    opt.disableflags = off ? opt.disableflags | this.actuationBit : opt.disableflags & ~this.actuationBit;
   }
 
   /** Queue a hit for the next control step (bullets land on the 50 Hz grid, like training). */
@@ -68,7 +92,8 @@ export class Sim {
     this.pending.push(h);
   }
 
-  controlStep(): void {
+  /** One 50 Hz step. `onSubstep` runs after every 2 ms physics step (replay recording). */
+  controlStep(onSubstep?: () => void): void {
     const { model, data, policy } = this;
     const c = policy.contract;
     buildObs(data.qpos, data.qvel, this.prevAction, c.default_joint_pos, this.homeXY, c.home_yaw, c.obs_scales, c.obs_clip, this.obs);
@@ -85,11 +110,44 @@ export class Sim {
 
     const hits = this.pending;
     this.pending = [];
+    this.lastHits = hits;
     if (hits.length) applyHits(model, data, hits, c.frame_skip);
-    for (let i = 0; i < c.frame_skip; i++) this.mj.mj_step(model, data);
+    for (let i = 0; i < c.frame_skip; i++) {
+      this.mj.mj_step(model, data);
+      onSubstep?.();
+    }
     if (hits.length) clearHits(data);
     this.time += this.dt;
 
     if (!this.knockdown) this.knockdown = this.falls.check(data);
+  }
+
+  snapshot(): SimSnapshot {
+    const d = this.data;
+    return {
+      qpos: Float64Array.from(d.qpos),
+      qvel: Float64Array.from(d.qvel),
+      ctrl: Float64Array.from(d.ctrl),
+      warmstart: Float64Array.from(d.qacc_warmstart),
+      prevAction: Float64Array.from(this.prevAction),
+      time: this.time,
+    };
+  }
+
+  restore(s: SimSnapshot): void {
+    const d = this.data;
+    d.qpos.set(s.qpos);
+    d.qvel.set(s.qvel);
+    d.ctrl.set(s.ctrl);
+    d.xfrc_applied.fill(0);
+    this.prevAction.set(s.prevAction);
+    this.time = s.time;
+    this.pending = [];
+    this.lastHits = [];
+    this.knockdown = '';
+    this.powered = true;
+    this.applyActuation();
+    this.mj.mj_forward(this.model, d);
+    d.qacc_warmstart.set(s.warmstart); // after mj_forward, which overwrites the warm-start
   }
 }

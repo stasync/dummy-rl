@@ -1,0 +1,5 @@
+# S1 (control): base as of Day 2 -- action_scale 0.6, weapon-like hit patterns (single / shotgun
+# burst / rifle rapid fire) from level 2, no capture-point term.
+inherit: ../base.yaml
+ppo:
+  total_timesteps: 6000000

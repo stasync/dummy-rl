@@ -16,19 +16,19 @@ from stagger.config import CurriculumCfg
 
 @dataclass
 class HitSchedule:
-    j_max: float                      # N*s, upper bound on a single hit's impulse
+    j_max: float                      # N*s, upper bound on one hit event's impulse
     regions: list[str]                # which hit regions are allowed
-    interval_min_s: float             # time between hits ~ U(interval_min_s, interval_max_s)
-    burst_prob: float                 # chance a hit event is a shotgun-like burst
+    interval_min_s: float             # time between hit events ~ U(interval_min_s, interval_max_s)
+    patterns: dict[str, float]        # allowed event types and their weights
 
 
-def schedule_for_level(level: int, cfg: CurriculumCfg, all_regions: list[str]) -> HitSchedule:
+def schedule_for_level(level: int, cfg: CurriculumCfg, all_regions: list[str], patterns: dict[str, float]) -> HitSchedule:
     t = level / cfg.max_level  # 0..1
     return HitSchedule(
         j_max=cfg.j_max_final * t,
         regions=list(all_regions) if level >= cfg.all_regions_from_level else list(cfg.core_regions),
         interval_min_s=cfg.interval_min_start_s + t * (cfg.interval_min_final_s - cfg.interval_min_start_s),
-        burst_prob=cfg.burst_prob if level >= cfg.burst_from_level else 0.0,
+        patterns=dict(patterns) if level >= cfg.patterns_from_level else {"single": 1.0},
     )
 
 

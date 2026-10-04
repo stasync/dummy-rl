@@ -1,0 +1,8 @@
+# S2: S1 + capture-point shaping. Rewards keeping the capture point (where the CoM would come to
+# rest) near the line between the feet, so moving a foot toward it pays off during a step.
+inherit: ../base.yaml
+rewards:
+  weights:
+    capture: 1.0
+ppo:
+  total_timesteps: 6000000

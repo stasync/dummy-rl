@@ -24,6 +24,8 @@ from stagger.randomization import Randomizer
 from stagger.rewards import RewardFn, RewardState
 from stagger.robot import REGIONS, load_robot
 
+STEP_MIN_DIST = 0.05  # m: a foot that lifts off and lands this far away counts as a recovery step
+
 
 class StaggerEnv(gym.Env):
     metadata = {"render_modes": []}
@@ -36,6 +38,9 @@ class StaggerEnv(gym.Env):
         self.key_id = self.model.key(cfg.env.keyframe).id
         self.frame_skip = cfg.env.frame_skip
         self.dt = self.frame_skip * self.model.opt.timestep
+        # Linear inverted pendulum: a CoM at height h moving at v comes to rest over a point
+        # v / omega0 ahead of it (the capture point), omega0 = sqrt(g / h).
+        self.omega0 = math.sqrt(-self.model.opt.gravity[2] / self.robot.standing_com_height)
 
         self.falls = FallDetector(self.robot, cfg.falls)
         self.reward_fn = RewardFn(cfg.rewards.weights, cfg.rewards.params)
@@ -58,12 +63,15 @@ class StaggerEnv(gym.Env):
         self.next_hit_step = 0
         self.episode_level = self.level
         self.last_hits: list[Hit] = []
+        self.hit_queue: list[tuple[int, int, float, str]] = []  # (due step, n hits, impulse per hit, region)
+        self.foot_down = np.ones(2, dtype=bool)
+        self.liftoff_xy = np.zeros((2, 2))
 
     # --- curriculum hook (called from the training callback via env_method) ----------------
 
     def set_level(self, level: int) -> None:
         self.level = int(level)
-        self.schedule = schedule_for_level(self.level, self.cfg.curriculum, list(REGIONS))
+        self.schedule = schedule_for_level(self.level, self.cfg.curriculum, list(REGIONS), self.cfg.hits.patterns)
 
     # --- gym API ----------------------------------------------------------------------------
 
@@ -89,6 +97,9 @@ class StaggerEnv(gym.Env):
         self.next_hit_step = e.settle_steps + self._sample_interval_steps()
         self.episode_level = self.level
         self.last_hits = []
+        self.hit_queue = []
+        self.foot_down[:] = True
+        self.liftoff_xy[:] = self._foot_xy()
         return self._obs(), {}
 
     def step(self, action: np.ndarray):
@@ -102,11 +113,13 @@ class StaggerEnv(gym.Env):
             applied = a
         d.ctrl[:] = self.robot.default_joint_pos + self.cfg.env.action_scale * applied
 
-        self.last_hits = []
-        if self.schedule.j_max > 0.0 and self.step_count >= self.next_hit_step:
-            self.last_hits = self._sample_hit_event()
+        new_event = self.schedule.j_max > 0.0 and self.step_count >= self.next_hit_step
+        if new_event:
+            span = self._queue_hit_event()
+            self.next_hit_step = self.step_count + span + self._sample_interval_steps()
+        self.last_hits = self._due_hits()
+        if self.last_hits:
             apply_hits(m, d, self.last_hits, self.frame_skip)
-            self.next_hit_step = self.step_count + self._sample_interval_steps()
 
         mujoco.mj_step(m, d, nstep=self.frame_skip)
         if self.last_hits:
@@ -115,7 +128,9 @@ class StaggerEnv(gym.Env):
 
         reason = self.falls.check(d)
         knocked_down = reason != ""
-        reward, terms = self.reward_fn(self._reward_state(a, knocked_down))
+        foot_contact, foot_xy = self._foot_contacts(), self._foot_xy()
+        steps_taken = self._count_steps(foot_contact, foot_xy)
+        reward, terms = self.reward_fn(self._reward_state(a, knocked_down, foot_contact, foot_xy))
         self.prev_action = a
 
         terminated = knocked_down
@@ -125,6 +140,8 @@ class StaggerEnv(gym.Env):
             "knockdown": reason,
             "level": self.episode_level,
             "hits": len(self.last_hits),
+            "hit_events": int(new_event),
+            "steps_taken": steps_taken,
         }
         return self._obs(), float(reward), terminated, truncated, info
 
@@ -145,36 +162,86 @@ class StaggerEnv(gym.Env):
         s = self.np_random.uniform(self.schedule.interval_min_s, self.cfg.hits.interval_max_s)
         return max(1, round(s / self.dt))
 
-    def _sample_hit_event(self) -> list[Hit]:
-        """One normal hit, or (from burst_from_level) sometimes a shotgun-like burst."""
+    @staticmethod
+    def _pick(rng: np.random.Generator, weights: dict[str, float]) -> str:
+        keys = list(weights)
+        p = np.array([weights[k] for k in keys], dtype=float)
+        return keys[rng.choice(len(keys), p=p / p.sum())]
+
+    def _queue_hit_event(self) -> int:
+        """Schedule one hit event, like a weapon would deliver it. Returns how many steps it spans.
+
+        single: one hit.  burst (shotgun): n pellets in the same step.  rapid (rifle): n hits
+        rapid_interval_s apart. All hits of an event land in one region (the player aims there).
+        A multi-hit event carries pattern_total_scale x the impulse of a single hit, split evenly.
+        """
         rng, h, sched = self.np_random, self.cfg.hits, self.schedule
-        weights = {r: w for r, w in h.region_weights.items() if r in sched.regions}
-        magnitude = rng.uniform(h.magnitude_min_frac, 1.0) * sched.j_max
-        if rng.random() < sched.burst_prob:
-            lo, hi = self.cfg.curriculum.burst_pellets
-            k = int(rng.integers(lo, hi + 1))
-            regions = list(weights)
-            p = np.array([weights[r] for r in regions])
-            region = regions[rng.choice(len(regions), p=p / p.sum())]  # a blast lands in one area
-            per_pellet = magnitude * self.cfg.curriculum.burst_total_scale / k
-            return [sample_hit(rng, self.robot, self.data, {region: 1.0}, per_pellet, h.max_elevation_deg) for _ in range(k)]
-        return [sample_hit(rng, self.robot, self.data, weights, magnitude, h.max_elevation_deg)]
+        region = self._pick(rng, {r: w for r, w in h.region_weights.items() if r in sched.regions})
+        pattern = self._pick(rng, sched.patterns)
+        total = rng.uniform(h.magnitude_min_frac, 1.0) * sched.j_max
+        now = self.step_count
+        if pattern == "single":
+            self.hit_queue.append((now, 1, total, region))
+            return 0
+        n = int(rng.integers(h.pattern_hits[0], h.pattern_hits[1] + 1))
+        per_hit = total * h.pattern_total_scale / n
+        if pattern == "burst":
+            self.hit_queue.append((now, n, per_hit, region))
+            return 0
+        spacing = max(1, round(h.rapid_interval_s / self.dt))
+        self.hit_queue += [(now + i * spacing, 1, per_hit, region) for i in range(n)]
+        return (n - 1) * spacing
 
-    def _reward_state(self, action: np.ndarray, knocked_down: bool) -> RewardState:
-        m, d, r = self.model, self.data, self.robot
-        R = quat_to_mat(d.qpos[3:7])
+    def _due_hits(self) -> list[Hit]:
+        """Hits whose time has come. Points are sampled now, on the body's current pose."""
+        due = [q for q in self.hit_queue if q[0] <= self.step_count]
+        if not due:
+            return []
+        self.hit_queue = [q for q in self.hit_queue if q[0] > self.step_count]
+        rng, elev = self.np_random, self.cfg.hits.max_elevation_deg
+        return [
+            sample_hit(rng, self.robot, self.data, {region: 1.0}, per_hit, elev)
+            for _, n, per_hit, region in due
+            for _ in range(n)
+        ]
 
-        foot_contact = np.zeros(2, dtype=bool)
+    def _foot_contacts(self) -> np.ndarray:
+        d, r = self.data, self.robot
+        contact = np.zeros(2, dtype=bool)
         for i in range(d.ncon):
             g1, g2 = d.contact.geom[i]
             for k, fg in enumerate(r.foot_geoms):
                 if (g1 == fg and g2 == r.floor_geom) or (g2 == fg and g1 == r.floor_geom):
-                    foot_contact[k] = True
+                    contact[k] = True
+        return contact
+
+    def _foot_xy(self) -> np.ndarray:
+        return self.data.geom_xpos[self.robot.foot_geoms, :2].copy()
+
+    def _count_steps(self, contact: np.ndarray, foot_xy: np.ndarray) -> int:
+        """Recovery steps: a foot that lifts off and touches down >= STEP_MIN_DIST from where it lifted."""
+        steps = 0
+        for k in range(2):
+            if self.foot_down[k] and not contact[k]:
+                self.liftoff_xy[k] = foot_xy[k]
+            elif not self.foot_down[k] and contact[k]:
+                steps += int(np.linalg.norm(foot_xy[k] - self.liftoff_xy[k]) >= STEP_MIN_DIST)
+        self.foot_down[:] = contact
+        return steps
+
+    def _reward_state(self, action: np.ndarray, knocked_down: bool, foot_contact: np.ndarray, foot_xy: np.ndarray) -> RewardState:
+        m, d, r = self.model, self.data, self.robot
+        R = quat_to_mat(d.qpos[3:7])
+
         foot_vel = np.zeros((2, 2))
         vel6 = np.zeros(6)
         for k, b in enumerate(self.foot_body_ids):
             mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_BODY, b, vel6, 0)  # [ang, lin], world frame
             foot_vel[k] = vel6[3:5]
+
+        mujoco.mj_subtreeVel(m, d)  # fills subtree_linvel (CoM velocity of each subtree)
+        root = r.body_ids["pelvis"]  # pelvis subtree = the whole robot
+        capture_point = d.subtree_com[root, :2] + d.subtree_linvel[root, :2] / self.omega0
 
         return RewardState(
             gravity_body=-R[2, :],
@@ -194,6 +261,8 @@ class StaggerEnv(gym.Env):
             prev_action=self.prev_action,
             foot_in_contact=foot_contact,
             foot_vel_xy=foot_vel,
+            foot_xy=foot_xy,
+            capture_point=capture_point,
             knocked_down=knocked_down,
         )
 

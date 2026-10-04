@@ -9,7 +9,7 @@ env:
   frame_skip: 10            # 10 x 2 ms physics steps = one 50 Hz policy step
   episode_steps: 500        # 10 s
   settle_steps: 25          # 0.5 s with no hits at the start of each episode
-  action_scale: 0.4         # rad: target = default_qpos + action_scale * a
+  action_scale: 0.6         # rad: target = default_qpos + action_scale * a (0.4 limited step length; see EXPERIMENTS T1/T2)
   reset_joint_noise: 0.02   # rad, uniform noise on the start pose (diversity)
   reset_yaw_noise: 0.1      # rad, so the heading term has something to correct
 
@@ -34,7 +34,13 @@ hits:
   region_weights: {torso: 0.35, pelvis: 0.15, head: 0.15, arms: 0.15, legs: 0.20}
   magnitude_min_frac: 0.3   # |J| ~ U(min_frac, 1) * J_max(level)
   max_elevation_deg: 15.0   # mostly horizontal shots
-  interval_max_s: 2.5       # time between hits ~ U(interval_min(level), interval_max)
+  interval_max_s: 2.5       # time between hit events ~ U(interval_min(level), interval_max)
+  # Hit events mimic the game's weapons, so "many hits at once" is trained, not just single shots.
+  # An event's total impulse is drawn like a single hit's, times pattern_total_scale for multi-hit events.
+  patterns: {single: 0.6, burst: 0.2, rapid: 0.2}  # burst = shotgun (same step), rapid = rifle (spaced)
+  pattern_hits: [3, 6]
+  rapid_interval_s: 0.1
+  pattern_total_scale: 1.5
 
 curriculum:
   enabled: true             # false = train at max_level from step 0 (ablation A1)
@@ -45,10 +51,7 @@ curriculum:
   all_regions_from_level: 3
   interval_min_start_s: 2.5 # level 0
   interval_min_final_s: 0.8 # max_level
-  burst_from_level: 6
-  burst_prob: 0.15          # chance a hit event is a shotgun-like burst
-  burst_pellets: [3, 6]
-  burst_total_scale: 1.5    # a burst's total impulse vs one normal hit
+  patterns_from_level: 2    # bursts / rapid fire from level 2 (was: shotgun bursts only from level 6)
   promote_survival: 0.8
   demote_survival: 0.5
   window_episodes: 50       # episodes at the current level needed before deciding
@@ -76,6 +79,7 @@ rewards:
     action_rate: -0.02
     joint_limit: -1.0
     foot_slip: -0.1
+    capture: 1.0            # capture-point shaping: the stepping incentive (S1 vs S2 in EXPERIMENTS.md)
     termination: -20.0
   params:
     upright_sigma: 0.05
@@ -84,6 +88,8 @@ rewards:
     heading_sigma: 0.3
     calm_sigma: 0.1
     joint_limit_soft_frac: 0.95  # penalize beyond 95% of each joint's range
+    capture_sigma: 0.01     # m^2: reward 0.37 when the capture point is 10 cm outside the feet
+    capture_margin: 0.06    # m: half a foot's width; the line between foot centers is "inside"
 
 ppo:
   total_timesteps: 30000000
@@ -101,6 +107,6 @@ ppo:
   max_grad_norm: 1.0
   net_arch: [256, 256, 128] # separate actor and critic MLPs of this shape
   activation: elu
-  log_std_init: -1.0
+  log_std_init: -1.4        # initial action std 0.25 x 0.6 rad = 0.15 rad of exploration noise
   torch_threads: 4
   checkpoint_every_steps: 2000000

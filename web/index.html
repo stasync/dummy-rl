@@ -8,13 +8,30 @@
   </head>
   <body>
     <canvas id="view"></canvas>
+
     <div id="hud">
-      <div id="title">STAGGER <span id="dev">dev build</span></div>
+      <div id="title">STAGGER <span id="dev"></span></div>
       <div id="modes"></div>
       <div id="status">loading physics…</div>
-      <div id="meter"><div id="meter-fill"></div><span>balance confidence</span></div>
-      <div id="help">click: shove · 1 AI · 2 Stiff · 3 Limp · R reset</div>
+      <div id="help">click shoot · Q/E or wheel: weapon · 1 AI · 2 Stiff · 3 Limp · Enter new round · ~ debug</div>
     </div>
+
+    <div id="weapons"></div>
+
+    <div id="score">
+      <div><span class="label">shots</span><span id="shots">0</span></div>
+      <div><span class="label">best</span><span id="best">–</span></div>
+      <div id="record-note"></div>
+    </div>
+
+    <div id="meter"><div id="meter-fill"></div><span>balance confidence</span></div>
+
+    <div id="banner" hidden>
+      <div id="banner-title"></div>
+      <div id="banner-sub"></div>
+    </div>
+
+    <div id="crosshair"></div>
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

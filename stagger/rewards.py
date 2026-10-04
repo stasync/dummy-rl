@@ -40,7 +40,16 @@ class RewardState:
     prev_action: np.ndarray
     foot_in_contact: np.ndarray  # (2,) bool
     foot_vel_xy: np.ndarray      # (2, 2) world-frame xy velocity of each foot
+    foot_xy: np.ndarray          # (2, 2) world xy of each foot's center
+    capture_point: np.ndarray    # (2,) where the CoM would come to rest: com_xy + v_com_xy / omega0
     knocked_down: bool
+
+
+def point_segment_distance(p: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
+    """Distance from point p to the segment a-b (2D)."""
+    ab, ap = b - a, p - a
+    t = float(np.clip(ap @ ab / max(float(ab @ ab), 1e-12), 0.0, 1.0))
+    return float(np.linalg.norm(ap - t * ab))
 
 
 TermFn = Callable[[RewardState, dict[str, float]], float]
@@ -121,6 +130,17 @@ def foot_slip(s: RewardState, p: dict[str, float]) -> float:
     # A planted foot should not skate; sliding feet are a common sim exploit.
     v2 = (s.foot_vel_xy**2).sum(axis=1)
     return float((v2 * s.foot_in_contact).sum())
+
+
+@term("capture")
+def capture(s: RewardState, p: dict[str, float]) -> float:
+    # Capture point (CP): where the robot would have to put a foot to stop. Standing still, it is
+    # under the CoM, between the feet -> 1. A hard push throws it outside the feet; the robot can
+    # only bring this back up by moving a foot toward the CP (a recovery step) or by braking.
+    # Unlike "alive", this pays off *during* the step, so PPO gets a gradient toward stepping
+    # instead of having to discover a complete, well-timed step by chance.
+    d = point_segment_distance(s.capture_point, s.foot_xy[0], s.foot_xy[1]) - p["capture_margin"]
+    return math.exp(-max(0.0, d) ** 2 / p["capture_sigma"])
 
 
 @term("termination")

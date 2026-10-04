@@ -1,0 +1,9 @@
+# S3: S2 + entropy bonus. Action std collapsed to ~0.11-0.17 in earlier runs; a small entropy
+# bonus keeps exploring, which a rare behavior like a well-timed step needs.
+inherit: ../base.yaml
+rewards:
+  weights:
+    capture: 1.0
+ppo:
+  ent_coef: 0.005
+  total_timesteps: 6000000

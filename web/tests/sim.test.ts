@@ -54,4 +54,28 @@ describe('game Sim (headless)', () => {
     expect(ai.knockdown).toBe('');
     expect(ai.minConfidence).toBeLessThan(0.9); // the balance meter reacts to the shove
   });
+
+  // Not bit-exact (~1e-15): after mj_step, derived fields like xipos are one physics substep
+  // stale, while restore() recomputes them with mj_forward, so the shot's torque differs in the
+  // last bits. For a player, rewind puts the robot back in the same situation.
+  it('rewind (snapshot/restore) replays a shot to floating-point precision', () => {
+    const sim = new Sim(mj, xml, policy);
+    for (let i = 0; i < 40; i++) sim.controlStep();
+    const snap = sim.snapshot();
+    const torso = sim.model.body('torso').id;
+    const shot = () => {
+      const p = sim.data.xipos;
+      sim.hit({ bodyId: torso, point: [p[torso * 3] + 0.09, p[torso * 3 + 1] + 0.05, p[torso * 3 + 2]], impulse: [-12, 4, 0] });
+      for (let i = 0; i < 50; i++) sim.controlStep();
+      return Float64Array.from(sim.data.qpos);
+    };
+    const first = shot();
+    sim.restore(snap);
+    const second = shot();
+    let diff = 0;
+    for (let i = 0; i < first.length; i++) diff = Math.max(diff, Math.abs(first[i] - second[i]));
+    expect(diff).toBeLessThan(1e-9);
+    sim.data.delete();
+    sim.model.delete();
+  });
 });

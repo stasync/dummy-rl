@@ -151,3 +151,66 @@ def test_curriculum_promote_and_demote(cfg):
     for _ in range(n):
         c.record(1, False)
     assert c.update() and c.level == 0
+
+
+def test_point_segment_distance():
+    from stagger.rewards import point_segment_distance
+
+    a, b = np.array([0.0, -0.1]), np.array([0.0, 0.1])
+    assert point_segment_distance(np.array([0.0, 0.0]), a, b) == pytest.approx(0.0)
+    assert point_segment_distance(np.array([0.3, 0.05]), a, b) == pytest.approx(0.3)
+    assert point_segment_distance(np.array([0.0, 0.4]), a, b) == pytest.approx(0.3)
+
+
+def test_capture_term_full_when_standing_still(cfg):
+    cfg.rewards.weights["capture"] = 1.0
+    e = StaggerEnv(cfg)
+    e.reset(seed=0)
+    _, _, _, _, info = e.step(np.zeros(18))
+    assert info["reward_terms"]["capture"] > 0.95
+
+
+@pytest.mark.parametrize("pattern", ["single", "burst", "rapid"])
+def test_hit_patterns(cfg, pattern):
+    """Each event type delivers its hits: burst = n hits in one step, rapid = n hits spread out."""
+    cfg.hits.patterns = {pattern: 1.0}
+    cfg.curriculum.patterns_from_level = 0
+    cfg.hits.pattern_hits = [4, 4]
+    e = StaggerEnv(cfg)
+    e.set_level(4)
+    e.reset(seed=0)
+    hits_per_step = []
+    while sum(hits_per_step) == 0 or len(hits_per_step) < e.cfg.env.settle_steps + 200:
+        _, _, term, _, info = e.step(np.zeros(18))
+        hits_per_step.append(info["hits"])
+        if term:
+            break
+    first = next(i for i, h in enumerate(hits_per_step) if h)
+    if pattern == "single":
+        assert hits_per_step[first] == 1
+    elif pattern == "burst":
+        assert hits_per_step[first] == 4
+    else:
+        spacing = round(cfg.hits.rapid_interval_s / e.dt)
+        assert [hits_per_step[first + i * spacing] for i in range(4)] == [1, 1, 1, 1]
+
+
+def test_step_counter(env):
+    """A foot that lifts off and lands 10 cm away is one step; landing in place is not."""
+    env.reset(seed=0)
+    xy = env._foot_xy()
+    assert env._count_steps(np.array([False, True]), xy) == 0          # left foot lifts
+    moved = xy.copy()
+    moved[0] += [0.1, 0.0]
+    assert env._count_steps(np.array([True, True]), moved) == 1        # lands 10 cm away
+    assert env._count_steps(np.array([True, False]), moved) == 0       # right lifts
+    assert env._count_steps(np.array([True, True]), moved) == 0        # lands in place
+
+
+def test_old_run_configs_still_load():
+    """Configs saved by Day 1 runs used curriculum.burst_*; they must still load for eval."""
+    p = REPO_ROOT / "runs/D1_short/config.yaml"
+    if not p.exists():
+        pytest.skip("no Day 1 run on this machine")
+    c = load_config(p)
+    assert c.hits.patterns["burst"] == pytest.approx(0.15)
